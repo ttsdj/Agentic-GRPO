@@ -38,7 +38,7 @@ python -c "
 from modelscope import snapshot_download
 snapshot_download('Qwen/Qwen2.5-7B-Instruct', cache_dir='./models')
 # 72B 太大,先注释,需要时再下
- snapshot_download('Qwen/Qwen2.5-72B-Instruct-AWQ', cache_dir='./models')
+# snapshot_download('Qwen/Qwen2.5-72B-Instruct-AWQ', cache_dir='./models')
 "
 
 echo "=== 搭建完成 ==="
