@@ -35,10 +35,19 @@ from vllm.inputs import TokensPrompt
 from vllm.lora.request import LoRARequest
 from vllm.outputs import RequestOutput
 from vllm.usage.usage_lib import UsageContext
-from vllm.utils import FlexibleArgumentParser, get_tcp_uri
+try:
+    from vllm.utils import FlexibleArgumentParser, get_tcp_uri
+except ImportError:  # vllm 0.8.x compat (get_tcp_uri added in 0.9)
+    from vllm.utils import FlexibleArgumentParser
+
+    def get_tcp_uri(host, port):
+        return f"tcp://{host}:{port}"
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.v1.engine.core import EngineCoreProc
-from vllm.v1.engine.utils import CoreEngineProcManager
+try:
+    from vllm.v1.engine.utils import CoreEngineProcManager  # vllm >= 0.9
+except ImportError:  # vllm 0.8.x: only needed for multi-node headless mode
+    CoreEngineProcManager = None
 from vllm.v1.executor.abstract import Executor
 
 from verl.single_controller.ray import RayClassWithInitArgs
@@ -338,7 +347,8 @@ class vLLMHttpServerBase:
         )
 
         # Don't keep the dummy data in memory
-        await engine_client.reset_mm_cache()
+        if hasattr(engine_client, "reset_mm_cache"):
+            await engine_client.reset_mm_cache()
 
         app = build_app(args)
         await init_app_state(engine_client, vllm_config, app.state, args)
