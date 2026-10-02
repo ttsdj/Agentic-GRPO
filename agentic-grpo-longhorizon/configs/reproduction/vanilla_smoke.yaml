@@ -1,0 +1,116 @@
+# Vanilla GRPO Smoke Test (5 step, 1 GPU, 小模型) — Phase 1 GPU 冒烟配置
+# 基于 configs/train/grpo/vanilla_grpo.yaml 裁剪；参照官方已验证的 configs/train/mock/mock_grpo.yaml。
+# 目标：验证 CUDA → PyTorch → vLLM → τ-bench 多轮交互 → Reward → GRPO → Backward → Optimizer 全链路，
+#       成功标准 = 至少 1 个完整 optimizer step，无 NaN。
+# 不修改任何原配置，本文件为新增（见 reproduction/patches/README.md）。
+#
+# ── 启动前置（GPU 机器，从内层项目根执行）──────────────────────────────
+# 0) 环境变量与 run_vanilla.sh:12-19 相同（VLLM_USE_V1=1 等），CUDA_VISIBLE_DEVICES=0
+# 1) 起小模型 user-sim 代替 72B（另一个 tmux；served-model-name 必须等于下方 interaction 的 user_model）:
+#    python -m vllm.entrypoints.openai.api_server \
+#      --model ../models/Qwen2.5-1.5B-Instruct \
+#      --served-model-name "Qwen/Qwen2.5-1.5B-Instruct" \
+#      --port 8001 --max-model-len 8192 --max-num-seqs 4 \
+#      --gpu-memory-utilization 0.35 --trust-remote-code
+# 2) 生成 2-task 冒烟数据:
+#    python scripts/train/grpo/build_grpo_parquet.py --seen-task-ids 0,1 \
+#      --output-train experiments/vanilla_smoke/train.parquet \
+#      --output-val   experiments/vanilla_smoke/val.parquet
+# 3) 启动（注意：hydra config-name 必须带子路径，裸名 vanilla_smoke 找不到，见 ISSUES.md #13）:
+#    python -m verl.trainer.main_ppo \
+#      --config-path=$(pwd)/configs --config-name=reproduction/vanilla_smoke
+#
+# 显存基线：1×RTX 4090 24GB + Qwen2.5-1.5B（policy + user-sim 同卡）。
+# 80GB 单卡跑 7B 闭环时：model.path 改 experiments/sft_lora_merged（或 7B 原始权重），
+#   gpu_memory_utilization 回 0.50，max_response_length/max_model_len 可回 12288/24576。
+
+hydra:
+  searchpath:
+    - pkg://verl/trainer/config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  train_files: experiments/vanilla_smoke/train.parquet
+  val_files: experiments/vanilla_smoke/val.parquet
+  train_batch_size: 2            # 2 task/step（原 4）
+  max_prompt_length: 2048        # 原 8192
+  max_response_length: 2048      # 原 12288：trajectory 会被早截断，链路完整
+  return_raw_chat: True          # 不能动
+  tool_config_path: configs/tool_config/tau_bench_airline_tools.yaml
+
+actor_rollout_ref:
+  model:
+    path: ../models/Qwen2.5-1.5B-Instruct   # 冒烟替身；正式用 experiments/sft_lora_merged
+    enable_gradient_checkpointing: true
+    lora_rank: 16
+    lora_alpha: 32
+    override_config:
+      attn_implementation: flash_attention_2   # 未装 flash-attn 时改 sdpa
+  actor:
+    fsdp_config:
+      optimizer_offload: true       # 绝对不能关
+      param_offload: true
+      model_dtype: bf16
+    optim:
+      lr: 5.0e-6
+    use_kl_loss: True
+    kl_loss_coef: 0.01
+    kl_loss_type: low_var_kl
+    ppo_mini_batch_size: 2          # 原 4
+    ppo_micro_batch_size_per_gpu: 1 # 显存安全阀（mock 同值）
+  rollout:
+    name: "vllm"
+    mode: async                     # 不能动
+    agent:
+      default_agent_loop: tool_agent  # 不能动
+    multi_turn:
+      enable: True                  # 不能动
+      format: "hermes"              # 不能动
+      max_user_turns: 2             # 原 15：快速走完多轮状态机
+      max_assistant_turns: 2        # 原 15
+      tool_config_path: configs/tool_config/tau_bench_airline_tools.yaml
+      interaction_config_path: configs/reproduction/interaction_smoke.yaml  # 小模型 user-sim 版
+    n: 4                            # 原 8：group=4 仍能算组内 std
+    temperature: 0.7
+    top_p: 0.9
+    tensor_model_parallel_size: 1   # 原 2：单卡
+    calculate_log_probs: true       # 与 bypass_mode 配套，不能动
+    gpu_memory_utilization: 0.45    # 24GB 卡；80GB 卡回 0.50
+    free_cache_engine: true         # 必须保持！
+    max_num_seqs: 4                 # 原 12
+    max_model_len: 8192             # 原 24576
+    max_num_batched_tokens: 8192    # 原 24576
+    log_prob_micro_batch_size_per_gpu: 1   # 原 4
+  ref:
+    fsdp_config:
+      optimizer_offload: true
+      param_offload: true
+      model_dtype: bf16
+    model:
+      path: ../models/Qwen2.5-1.5B-Instruct   # 与 actor 同源
+      override_config:
+        attn_implementation: flash_attention_2
+    log_prob_micro_batch_size_per_gpu: 1
+
+algorithm:
+  adv_estimator: grpo               # vanilla 同款
+  kl_ctrl:
+    kl_coef: 0.01
+  rollout_correction:
+    bypass_mode: true               # 直接用 rollout_log_probs 当 old_log_probs，不能动
+
+trainer:
+  total_epochs: 1                   # 原 50
+  total_training_steps: 5           # 原 500
+  save_freq: -1                     # 冒烟不存 checkpoint
+  test_freq: -1                     # 冒烟不跑验证
+  val_before_train: false           # 跳过训练前全量验证（省一次大 rollout）
+  default_local_dir: experiments/vanilla_smoke/checkpoints
+  logger: ['console']               # 去 swanlab（原 ['console','swanlab']）
+  project_name: agentic-grpo-longhorizon
+  experiment_name: vanilla_smoke_5step
+  n_gpus_per_node: 1                # 原 2
+  nnodes: 1

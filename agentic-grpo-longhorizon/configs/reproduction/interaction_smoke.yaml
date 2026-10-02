@@ -1,0 +1,16 @@
+# Smoke 用 interaction 配置 — configs/interaction_config/tau_bench_airline.yaml 的小模型变体
+# 唯一目的：让 Phase 1 单卡冒烟不需要 72B-AWQ。
+# 差异仅两处：user_model 换小模型、max_turns 调小。name 必须保持 "tau_bench_airline"
+# （parquet 的 extra_info.interaction_kwargs.name 与 TauBenchInteraction 注册名都依赖它）。
+# 正式实验一律用原配置 configs/interaction_config/tau_bench_airline.yaml（72B-AWQ @ :8001）。
+interaction:
+  - name: "tau_bench_airline"
+    class_name: "src.envs.tau_bench_interaction.TauBenchInteraction"
+    config:
+      env_name: "airline"
+      user_strategy: "llm"
+      user_model: "Qwen/Qwen2.5-1.5B-Instruct"   # 原: Qwen/Qwen2.5-72B-Instruct-AWQ
+      user_provider: "openai"
+      user_base_url: "http://localhost:8001/v1"  # vLLM server 需以相同 served-model-name 起服务
+      task_split: "test"
+      max_turns: 4   # 原: 30（评测口径）；冒烟只需走通多轮状态机
