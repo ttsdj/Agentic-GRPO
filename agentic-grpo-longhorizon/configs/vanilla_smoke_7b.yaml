@@ -1,0 +1,96 @@
+# 7B GRPO 短跑配置（4090 双卡版，基于 vanilla_smoke.yaml 改模型与数据）
+# GPU0 = 7B SFT-merged policy 训练（hybrid vLLM+FSDP，util 0.85）
+# GPU1 = 7B user-sim server(:8001)
+# 数据 = experiments/vanilla/{train,val}.parquet（原作者 split，40 seen task）
+# 3 epoch × (40/2) = 60 步封顶在 total_training_steps=8；验收 = ≥1 完整 optimizer step 且 reward 出现非全零
+
+hydra:
+  searchpath:
+    - pkg://verl/trainer/config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  train_files: experiments/vanilla/train.parquet
+  val_files: experiments/vanilla/val.parquet
+  train_batch_size: 2
+  max_prompt_length: 2048
+  max_response_length: 2048
+  return_raw_chat: True
+  tool_config_path: configs/tool_config/tau_bench_airline_tools.yaml
+
+actor_rollout_ref:
+  model:
+    path: experiments/sft_lora_merged        # SFT warmup 后的模型
+    enable_gradient_checkpointing: true
+    lora_rank: 16
+    lora_alpha: 32
+    override_config:
+      attn_implementation: flash_attention_2
+  actor:
+    fsdp_config:
+      optimizer_offload: true       # 绝对不能关
+      param_offload: true
+      model_dtype: bf16
+    optim:
+      lr: 5.0e-6
+    use_kl_loss: True
+    kl_loss_coef: 0.01
+    kl_loss_type: low_var_kl
+    ppo_mini_batch_size: 2
+    ppo_micro_batch_size_per_gpu: 1   # 7B 必需
+  rollout:
+    name: "vllm"
+    mode: async                     # 不能动
+    agent:
+      default_agent_loop: tool_agent
+    multi_turn:
+      enable: True
+      format: "hermes"
+      max_user_turns: 2             # 冒烟压缩；正式版回 15
+      max_assistant_turns: 2
+      tool_config_path: configs/tool_config/tau_bench_airline_tools.yaml
+      interaction_config_path: configs/reproduction/interaction_smoke.yaml  # user-sim 指向 :8001
+    n: 4
+    temperature: 0.7
+    top_p: 0.9
+    tensor_model_parallel_size: 1
+    calculate_log_probs: true       # 与 bypass_mode 配套
+    gpu_memory_utilization: 0.85    # 7B 权重 15G + KV ~4G
+    free_cache_engine: true         # 必须保持！
+    max_num_seqs: 4
+    max_model_len: 4096             # KV 压力控制
+    max_num_batched_tokens: 4096
+    log_prob_micro_batch_size_per_gpu: 1
+  ref:
+    fsdp_config:
+      optimizer_offload: true
+      param_offload: true
+      model_dtype: bf16
+    model:
+      path: experiments/sft_lora_merged
+      override_config:
+        attn_implementation: flash_attention_2
+    log_prob_micro_batch_size_per_gpu: 1
+
+algorithm:
+  adv_estimator: grpo
+  kl_ctrl:
+    kl_coef: 0.01
+  rollout_correction:
+    bypass_mode: true               # 不能动
+
+trainer:
+  total_epochs: 1
+  total_training_steps: 8
+  save_freq: -1
+  test_freq: -1
+  val_before_train: false
+  default_local_dir: experiments/vanilla/checkpoints
+  logger: ['console']
+  project_name: agentic-grpo-longhorizon
+  experiment_name: vanilla_7b_smoke_4090
+  n_gpus_per_node: 1
+  nnodes: 1

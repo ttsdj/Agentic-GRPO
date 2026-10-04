@@ -1,0 +1,45 @@
+# 4090 版 SFT LoRA 配置（基于原作者 sft_airline_lora.yaml，仅改 batch/logger）
+# 数据用仓库自带的原作者 72B 采集轨迹（experiments/sft_collect_airline/train.jsonl）
+
+model:
+  name_or_path: "../models/Qwen2.5-7B-Instruct"
+  attn_impl: "sdpa"
+
+data:
+  train_jsonl: "experiments/sft_collect_airline/train.jsonl"
+  eval_jsonl: null
+  max_length: 5120
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+train:
+  num_epochs: 5
+  per_device_batch_size: 1   # 原版 2（A800）；4090 24GB 必须 1（原作者注释）
+  grad_accum_steps: 4
+  lr: 1.0e-4
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  logging_steps: 5
+  save_strategy: epoch
+  save_total_limit: 3
+  run_name: "sft_airline_lora_4090"
+  seed: 42
+
+logger:
+  backend: none             # 原版 swanlab；无账号，改 none
+
+output:
+  dir: "experiments/sft_lora"
