@@ -58,11 +58,11 @@ actor_rollout_ref:
     top_p: 0.9
     tensor_model_parallel_size: 1
     calculate_log_probs: true       # 与 bypass_mode 配套
-    gpu_memory_utilization: 0.85    # 7B 权重 15G + KV ~4G
+    gpu_memory_utilization: 0.75
     free_cache_engine: true         # 必须保持！
-    max_num_seqs: 4
-    max_model_len: 4096             # KV 压力控制
-    max_num_batched_tokens: 4096
+    max_num_seqs: 2
+    max_model_len: 3072
+    max_num_batched_tokens: 3072
     log_prob_micro_batch_size_per_gpu: 1
   ref:
     fsdp_config:

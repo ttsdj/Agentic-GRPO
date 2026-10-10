@@ -56,9 +56,9 @@ actor_rollout_ref:
     n: 4
     temperature: 0.7
     top_p: 0.9
-    tensor_model_parallel_size: 1
+    tensor_model_parallel_size: 2
     calculate_log_probs: true       # 与 bypass_mode 配套
-    gpu_memory_utilization: 0.85    # 7B 权重 15G + KV ~4G
+    gpu_memory_utilization: 0.50    # TP=2 双卡，FSDP 分片后每卡宽裕（原版值）
     free_cache_engine: true         # 必须保持！
     max_num_seqs: 4
     max_model_len: 4096             # KV 压力控制
@@ -92,5 +92,5 @@ trainer:
   logger: ['console']
   project_name: agentic-grpo-longhorizon
   experiment_name: vanilla_7b_smoke_4090
-  n_gpus_per_node: 1
+  n_gpus_per_node: 2
   nnodes: 1

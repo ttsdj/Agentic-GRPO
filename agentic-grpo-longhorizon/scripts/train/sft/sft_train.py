@@ -42,6 +42,15 @@ from peft import LoraConfig, TaskType, get_peft_model
 
 from src.training.sft_dataset import TrajectorySFTDataset, collate_fn_padding
 
+# 4090 24GB 补丁：Liger fused CE，避免 152K vocab × 5K 长度的 logits 显存爆炸
+try:
+    from liger_kernel.transformers import apply_liger_kernel_to_qwen2
+    apply_liger_kernel_to_qwen2()
+    print("[liger] fused kernels applied (qwen2)")
+except ImportError:
+    print("[liger] not available, plain CE")
+
+
 
 def main():
     parser = argparse.ArgumentParser()
